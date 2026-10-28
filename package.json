@@ -1,0 +1,60 @@
+{
+  "name": "@abrova/push-web",
+  "version": "0.1.13",
+  "description": "Web Push SDK for browsers - Firebase alternative that works everywhere",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.esm.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "!dist/test",
+    "service-worker.js"
+  ],
+  "scripts": {
+    "prebuild": "node scripts/gen-version.mjs",
+    "build": "rollup -c",
+    "dev": "rollup -c -w",
+    "test": "NODE_OPTIONS='--experimental-vm-modules' jest --passWithNoTests",
+    "test:watch": "NODE_OPTIONS='--experimental-vm-modules' jest --watch",
+    "test:coverage": "NODE_OPTIONS='--experimental-vm-modules' jest --coverage",
+    "prepublishOnly": "npm run build",
+    "pretest": "node scripts/gen-version.mjs"
+  },
+  "keywords": [
+    "push-notifications",
+    "web-push",
+    "service-worker",
+    "mqtt",
+    "websocket",
+    "firebase-alternative",
+    "abrova-push"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abrova-co/abrova_push_web_sdk.git"
+  },
+  "author": "Abrova <support@abrova.ir>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/Abrova-co/abrova_push_web_sdk/issues"
+  },
+  "homepage": "https://abrova.ir/cloud/abrova-push",
+  "devDependencies": {
+    "@rollup/plugin-commonjs": "^25.0.0",
+    "@rollup/plugin-json": "^6.1.0",
+    "@rollup/plugin-node-resolve": "^15.0.0",
+    "@rollup/plugin-terser": "^0.4.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "@types/jest": "^29.5.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "rollup": "^4.0.0",
+    "ts-jest": "^29.1.0",
+    "tslib": "^2.6.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "@abrova/pn-protocol": "^0.1.1"
+  }
+}

@@ -1,0 +1,142 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.13] - 2026-10-28
+
+### Added
+- Opened, clicked and dismissed tracking: the service worker reports a click on a notification as `opened`, a click on an action button as `clicked` (with the action's id), and closing it without a click as `dismissed`. Sent next to opening the page, once per message. Copy the new `service-worker.js` into your public directory to get it. Notifications the SDK shows without a service worker report `opened` from the page.
+
+### Fixed
+- `unregister()` now also detaches the signed-in user from this browser on the server (as on iOS), so pushes to that user no longer target it. `getUserId()` returns `null` afterwards.
+
+### Docs
+- Browser support: Safari on iOS / iPadOS 16.4+ supports Web Push for web apps added to the Home Screen.
+
+## [0.1.12] - 2026-10-02
+
+### Added
+- Signed user tokens (optional). Pass `tokenProvider` - the same function you
+  give the other Abrova SDKs - and every request carries the user's token, so
+  the server knows who the user is instead of trusting the `userId` sent by
+  the page. The token is cached in memory, renewed shortly before it expires,
+  and a request refused as expired is retried once with a fresh token.
+- `setTokenProvider()`, `setUserToken()` and the `onAuthError()` callback.
+
+Without a token provider nothing changes. The service worker file is unchanged.
+
+## [0.1.11] - 2026-09-29
+
+### Changed
+- The real-time connection recovers faster and keeps trying while the page is
+  open: retries back off from 1 s to at most 60 s and no longer stop after 10
+  attempts (`maxReconnectAttempts` now defaults to 0, meaning no limit).
+- Keepalive is 30 s, so a dead connection is noticed sooner.
+- The connection comes back right away when the network returns, the tab
+  becomes visible or focused, or the page is restored from the back/forward
+  cache. After the page was in the background for a while, the SDK checks the
+  connection is still alive and replaces it if not.
+- Only one connection is ever open at a time.
+- Requires `@abrova/pn-protocol` 0.1.1.
+
+### Added
+- Support for alternative real-time endpoints sent by the server, with
+  automatic failover and memory of the one that last worked. Nothing to
+  configure; without them the SDK behaves as before.
+
+## [0.1.10] - 2026-09-23
+
+### Added
+- `showNotification(message)`: shows an OS notification for a message that
+  arrived while the page was open. The SDK stays quiet then by design, and the
+  app knows when a message deserves a notification anyway.
+
+## [0.1.9] - 2026-09-23
+
+### Fixed
+- Real-time messages now reach the browser. The SDK listened on a different
+  channel from the one the server sends on, so nothing ever arrived over the
+  real-time connection and every notification depended on Web Push alone.
+- A message that arrives over both paths no longer shows two notifications.
+
+## [0.1.8] - 2026-09-23
+
+### Fixed
+- Delivery confirmations are now sent whichever way the service worker was
+  registered. Previously only a worker registered by the SDK could confirm
+  delivery; one registered by the app itself could not, so its notifications
+  stayed at "sent" in the Console.
+- The same worker can now also re-register a push subscription the browser
+  replaces, instead of losing it.
+
+## [0.1.7] - 2026-09-16
+
+### Added
+- In-App Messages (`abrovaPush.inApp`): modal, banner, fullscreen and card
+  campaigns triggered on app open, session start or a custom event.
+- The built-in UI renders in a shadow root, is keyboard and screen-reader
+  accessible, and can be replaced with your own via `inApp.display: 'manual'`.
+
+## [0.1.6] - 2026-09-16
+
+### Added
+- Message Inbox (`abrovaPush.inbox`): fetch, read, archive, delete and bulk-update
+  server-stored messages, with a per-device cache and an unread count.
+- Real-time `inbox_update` messages update the inbox instead of showing a notification.
+
+## [0.1.5] - 2026-09-14
+
+### Added
+- SDK identity: the SDK reports its name and version (`SDK_VERSION` export).
+- `autoRefresh` (default `true`): keeps a registered browser up to date on page load.
+- Delivery confirmation for messages received while the page is open.
+- `osVersion` and `deviceModel` (browser) are filled in automatically.
+
+### Fixed
+- `clearUserId()` now detaches the user on the server (it returns a Promise).
+- Pushes forwarded by the service worker to an open page now reach `onMessage`, once per message.
+
+### Service worker
+Copy the updated `service-worker.js`. If you maintain a customised copy, the only
+changes are: read `abrovaSdkVersion` from the worker URL, and send `sdkName` /
+`sdkVersion` when re-registering on `pushsubscriptionchange`. An older worker
+keeps working.
+
+## [0.1.4] - 2026-09-07
+
+### Added
+- Delivery confirmation — the service worker reports notifications it displays, so the dashboard shows `delivered`, not just `sent`.
+- Automatic re-subscription when the browser rotates a push subscription (`pushsubscriptionchange`). Previously the stale endpoint kept failing and notifications silently stopped.
+
+### Fixed
+- Subscriptions created with an old VAPID key are now detected and recreated. They previously looked valid while every send was rejected.
+- Android Chrome silently dropping notifications: each push now gets a unique `tag` (a fixed tag collapsed them all into one slot), `renotify` is set so Chrome surfaces them while backgrounded, and icons fall back to a real file since a 404 icon makes Android discard the notification.
+- `showNotification` is retried without optional fields if the first call fails, instead of failing silently.
+
+### Added (cont.)
+- The worker mirrors each push to visible pages via `postMessage` (`type: 'abrova-push-message'`), so in-app UI still updates when the page-side connection is asleep. Dedupe by `messageId`.
+
+### Upgrading
+Copy the updated `service-worker.js` to your public directory — the new handlers live in that file.
+
+## [0.1.3] - 2026-08-23
+
+### Added
+- Device attributes (language, country, timezone) are now sent automatically on every `register()` call. Use them as preset filters in the dashboard's segment builder to target specific locales, regions, or timezones — no need to populate metadata yourself.
+- New optional `appVersion` field on `AbrovaPushConfig`. Set it at init time (e.g., from your build config) and target specific releases as a preset segment filter.
+
+### Deprecated
+- `metadata.language` is deprecated in favor of the new top-level `Language` preset filter. Existing segments that filter on `metadata.language` keep working — the field is still populated. Migrate to the preset filter in a future release; `metadata.language` will be removed in a later version.
+
+## [0.1.2] - 2026-08-17
+
+### Fixed
+- iOS Safari PWA backgrounding produced console noise (`Gateway error: Connection refused: Server busy`, `Error [1001]: Connection timed out`) as iOS suspended the MQTT socket. Push notifications via Web Push (VAPID) were unaffected — this only cleans up the noise from the separate real-time channel.
+
+### Changed
+- `scheduleReconnect` now bails out early when `document.hidden` — iOS/Safari won't let a background reconnect succeed, retries just produce noise. `visibilitychange → visible` still triggers an immediate reconnect.
+- Gateway connection errors while backgrounded are logged at `DEBUG` instead of `ERROR`. Foreground errors still show at `ERROR` as before.
+- On `visibilitychange → visible` with a stale/failed connection, the reconnect-attempt counter resets so users don't wait through exponential backoff from failed background retries.
