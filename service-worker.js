@@ -288,7 +288,8 @@ self.addEventListener('push', (event) => {
     renotify: true,
     // A second signal to Android that this is a fresh user-visible event.
     // Ignored on desktop.
-    vibrate: [200, 100, 200],
+    // `vibrate: false` comes from a notification channel without vibration (Abrova Console).
+    vibrate: data.vibrate === false ? [] : [200, 100, 200],
     data: {
       ...data.data,
       deepLink: data.deepLink,

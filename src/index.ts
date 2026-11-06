@@ -469,6 +469,10 @@ export interface AbrovaPushMessage {
   collapseKey?: string;
   /** Category for filtering */
   category?: string;
+  /** Notification channel the message was sent on (a channel defined in Abrova Console). */
+  channelId?: string;
+  /** False when the message's channel has vibration off. */
+  vibrate?: boolean;
   // Priority and TTL
   /** Priority: default, high, low */
   priority?: 'default' | 'high' | 'low';
@@ -2570,6 +2574,8 @@ class AbrovaPush {
       threadId: data.threadId,
       collapseKey: data.collapseKey,
       category: data.category,
+      channelId: data.channelId,
+      vibrate: data.vibrate,
       // Priority
       priority: data.priority,
       ttl: data.ttl,
@@ -2753,6 +2759,7 @@ class AbrovaPush {
       },
       requireInteraction: message.priority === 'high',
       silent: message.sound === 'none',
+      ...(message.vibrate === false ? { vibrate: [] } : {}),
     };
 
     // Add action buttons if supported
