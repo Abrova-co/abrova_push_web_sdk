@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.17] - 2026-11-15
 
+**Withdrawn from Abrova Center:** Web Push on iPhone home-screen apps did not work in this version. Use 0.1.18.
+
 ### Fixed
 - Web Push subscribes only once the service worker is active. Right after it is registered the worker is often still
   installing; Safari (iPhone home-screen apps) then refused the subscription and the app silently fell back to the
@@ -30,6 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `standalone` or `browser`), so a device without background notifications can be explained.
 
 ## [0.1.16] - 2026-11-15
+
+**Withdrawn from Abrova Center:** Web Push on iPhone home-screen apps did not work in this version. Use 0.1.18.
 
 ### Added
 - `serviceWorkerScope` (default `/`): register the Abrova Push worker under its own scope, next to another service
