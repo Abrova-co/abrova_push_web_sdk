@@ -113,6 +113,7 @@ const abrovaPush = new AbrovaPush({
   apiKey: 'ab_live_...',                    // Required - from Abrova Console
   serviceWorkerPath: '/abrova-push-sw.js',  // Optional - service worker path
   autoRegisterServiceWorker: true,          // Optional - auto register SW (default: true)
+  serviceWorkerScope: '/',                  // Optional - its scope; use e.g. '/abrova-push/' next to another worker at '/'
   mqttQos: 1,                              // Optional - MQTT QoS level (default: 1)
   maxReconnectAttempts: 0,                  // Optional - max reconnect attempts (default: 0 = keep trying)
   logLevel: AbrovaPushLogLevel.ERROR,       // Optional - log level

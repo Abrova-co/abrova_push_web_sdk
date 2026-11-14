@@ -194,6 +194,12 @@ export interface AbrovaPushConfig {
     vapidPublicKey?: string;
     /** Auto-register service worker (default: true) */
     autoRegisterServiceWorker?: boolean;
+    /**
+     * Scope of the service worker registration (default: '/'). A narrower scope, such as '/abrova-push/', keeps it apart
+     * from a worker the app has at '/' (Flutter web has one): one scope holds one worker, and two at '/' replace each
+     * other. A worker receives pushes whatever pages it controls.
+     */
+    serviceWorkerScope?: string;
     /** MQTT QoS level (default: 1) */
     mqttQos?: 0 | 1 | 2;
     /**
@@ -658,6 +664,11 @@ declare class AbrovaPush {
     private handleOffline;
     private handleVisibilityChange;
     private checkInitialMessage;
+    /**
+     * The registration of this SDK's worker, if the app registered it itself. Another worker (Flutter web's own at '/')
+     * is never used: subscribing it to Web Push would send pushes to a worker that does not show them.
+     */
+    private ownServiceWorkerRegistration;
     private registerServiceWorker;
     /**
      * Keeps `abrova-push` / `config` up to date for the service worker.
