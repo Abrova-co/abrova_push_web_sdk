@@ -312,9 +312,29 @@ self.addEventListener('push', (event) => {
   }
 
   // Show notification with potentially localized title
-  const title = localizedTitle || data.title;
+  let title = localizedTitle || data.title;
+  const conversation = abrovaConversationOf(data.data, title);
 
   event.waitUntil((async () => {
+    // A chat message (data.conversationId): one notification per conversation, the sender's photo, earlier lines kept.
+    if (conversation) {
+      const tag = 'abrova-conversation:' + conversation.id;
+      let previous = [];
+      try {
+        const open = await self.registration.getNotifications({ tag });
+        previous = (open[0] && open[0].data && open[0].data.abrovaConversationLines) || [];
+      } catch (err) {
+        previous = [];
+      }
+      const view = abrovaConversationView(conversation, options.body || '', previous);
+      title = view.title;
+      options.body = view.body;
+      options.tag = tag;
+      options.data.abrovaConversationLines = view.lines;
+      if (conversation.avatarUrl) options.icon = conversation.avatarUrl;
+      delete options.image;
+    }
+
     // Mirror the payload to any visible page. On mobile the app is usually
     // backgrounded or the screen is locked, so the page-side connection is
     // asleep and only the worker sees the push. Pages should dedupe by
@@ -425,6 +445,29 @@ self.addEventListener('pushsubscriptionchange', (event) => {
       }),
   );
 });
+
+// Chat-style notifications (same rules as src/conversation.ts).
+function abrovaConversationOf(data, fallbackSender) {
+  if (!data) return null;
+  const text = (v) => (v === undefined || v === null ? undefined : String(v).trim() || undefined);
+  const id = text(data.conversationId);
+  if (!id) return null;
+  const avatar = text(data.senderAvatarUrl);
+  return {
+    id: id.slice(0, 200),
+    senderName: text(data.senderName) || fallbackSender || '?',
+    avatarUrl: avatar && /^https?:\/\//i.test(avatar) ? avatar : undefined,
+    title: text(data.conversationTitle),
+    isGroup: data.conversationIsGroup === true || String(data.conversationIsGroup).toLowerCase() === 'true',
+  };
+}
+
+function abrovaConversationView(c, body, previousLines) {
+  const line = c.isGroup ? c.senderName + ': ' + body : body;
+  const before = Array.isArray(previousLines) ? previousLines.filter((l) => typeof l === 'string') : [];
+  const lines = before.concat([line]).slice(-5);
+  return { title: c.isGroup && c.title ? c.title : c.senderName, body: lines.join('\n'), lines };
+}
 
 // Helper function to get localized content
 function getLocalizedContent(data, field) {

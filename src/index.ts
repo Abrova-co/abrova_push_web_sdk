@@ -26,6 +26,7 @@ import {
   PNConnectionListener,
 } from '@abrova/pn-protocol';
 import { SDK_NAME, SDK_VERSION } from './version';
+import { conversationOf, conversationTag, conversationView } from './conversation';
 import {
   BoundedSet,
   detectDeviceInfo,
@@ -2736,6 +2737,9 @@ class AbrovaPush {
     }
   }
 
+  /** Lines of the conversation notifications shown without a service worker (tag → lines). */
+  private conversationLines = new Map<string, string[]>();
+
   private showRichNotification(message: AbrovaPushMessage): void {
     if (Notification.permission !== 'granted') {
       return;
@@ -2773,6 +2777,56 @@ class AbrovaPush {
       if (this.serviceWorkerRegistration) {
         (options as any).actions = notificationActions;
       }
+    }
+
+    // A chat message (data.conversationId): one notification per conversation, the sender's photo, earlier lines kept.
+    const conversation = conversationOf(message.data as Record<string, unknown> | undefined, message.title);
+    if (conversation && !this.serviceWorkerRegistration) {
+      // No service worker (e.g. Flutter web): the same tag replaces the last one; earlier lines are kept here.
+      const tag = conversationTag(conversation);
+      const view = conversationView(conversation, message.body ?? '', this.conversationLines.get(tag));
+      this.conversationLines.set(tag, view.lines);
+      const notification = new Notification(view.title, {
+        ...options,
+        body: view.body,
+        tag,
+        icon: conversation.avatarUrl ?? options.icon,
+        image: undefined,
+      } as NotificationOptions);
+      notification.onclick = () => {
+        this.conversationLines.delete(tag);
+        void this.reportInteraction('opened', message.messageId);
+        window.focus();
+        if (message.deepLink) window.location.href = message.deepLink;
+        if (this.onNotificationClickCallback) this.onNotificationClickCallback(message);
+        this.trackEvent(AbrovaPushAnalyticsEvent.NOTIFICATION_CLICKED, { messageId: message.messageId, title: message.title });
+        notification.close();
+      };
+      notification.onclose = () => this.conversationLines.delete(tag);
+      return;
+    }
+    if (conversation && this.serviceWorkerRegistration) {
+      const registration = this.serviceWorkerRegistration;
+      const tag = conversationTag(conversation);
+      void (async () => {
+        let previous: unknown = [];
+        try {
+          const open = await registration.getNotifications({ tag });
+          previous = open[0]?.data?.abrovaConversationLines ?? [];
+        } catch {
+          previous = [];
+        }
+        const view = conversationView(conversation, message.body ?? '', previous);
+        await registration.showNotification(view.title, {
+          ...options,
+          body: view.body,
+          tag,
+          icon: conversation.avatarUrl ?? options.icon,
+          image: undefined,
+          data: { ...options.data, abrovaConversationLines: view.lines },
+        } as NotificationOptions);
+      })();
+      return;
     }
 
     if (this.serviceWorkerRegistration) {
