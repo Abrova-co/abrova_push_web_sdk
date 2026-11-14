@@ -118,3 +118,56 @@ describe('subscription waits for an active worker', () => {
     expect(order).toEqual(['subscribe while activated']);
   });
 });
+
+describe('prepared worker: register() subscribes first (Safari needs it right after the tap)', () => {
+  beforeAll(() => {
+    (window as any).PushManager = function PushManager() {};
+  });
+  afterAll(() => {
+    delete (window as any).PushManager;
+  });
+  it('subscribes before asking for permission or anything slow, and reports the status', async () => {
+    (Notification as any).permission = 'default';
+    const order: string[] = [];
+    const permissionMock = Notification.requestPermission as jest.Mock;
+    permissionMock.mockImplementationOnce(async () => {
+      order.push('permission');
+      return 'granted';
+    });
+    const push: any = new AbrovaPush({ apiKey: 'ab_live_test123', serviceWorkerScope: '/abrova-push/' });
+    await push.waitForConfig();
+    push.vapidPublicKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
+    push.serviceWorkerRegistration = {
+      active: { state: 'activated' },
+      installing: null,
+      waiting: null,
+      pushManager: {
+        getSubscription: jest.fn(async () => null),
+        subscribe: jest.fn(async () => {
+          order.push('subscribe');
+          return { endpoint: 'https://web.push.apple.com/x', toJSON: () => ({ endpoint: 'https://web.push.apple.com/x', keys: {} }) };
+        }),
+      },
+    };
+    (navigator.serviceWorker as any).register.mockClear();
+    await push.register().catch(() => undefined);
+    expect(order[0]).toBe('subscribe');
+    expect(push.serviceWorkerRegistration.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect((navigator.serviceWorker as any).register).not.toHaveBeenCalled();
+    expect(push.getWebPushStatus()).toBe('subscribed');
+  });
+
+  it('a refused subscription is reported, not thrown', async () => {
+    (Notification as any).permission = 'granted';
+    const push: any = new AbrovaPush({ apiKey: 'ab_live_test123', serviceWorkerScope: '/abrova-push/' });
+    await push.waitForConfig();
+    push.vapidPublicKey = 'BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U';
+    const refused = Object.assign(new Error('User denied push permission'), { name: 'NotAllowedError' });
+    push.serviceWorkerRegistration = {
+      active: { state: 'activated' },
+      pushManager: { getSubscription: jest.fn(async () => null), subscribe: jest.fn(async () => { throw refused; }) },
+    };
+    await push.register().catch(() => undefined);
+    expect(push.getWebPushStatus()).toBe('failed: NotAllowedError: User denied push permission');
+  });
+});

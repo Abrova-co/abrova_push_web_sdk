@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.18] - 2026-11-15
+
+### Added
+- `prepareWebPush()`: registers the service worker when the page loads and waits until it is active (no permission
+  needed). `getWebPushStatus()`: how Web Push went at the last `register()`.
+
+### Fixed
+- Safari (iPhone home-screen apps) refused the Web Push subscription (`NotAllowedError: User denied push
+  permission`) although notifications were allowed: it accepts one only right after the user's tap, and `register()`
+  first waited for the server config and the worker. With a prepared worker, `register()` now subscribes first;
+  when permission is not decided yet, the subscription itself shows the prompt.
+
 ## [0.1.17] - 2026-11-15
 
 ### Fixed

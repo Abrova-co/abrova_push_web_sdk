@@ -583,6 +583,17 @@ declare class AbrovaPush {
      * Get the message that launched/opened the app (when user tapped a notification)
      * Returns null if the app was not opened from a notification tap
      */
+    /**
+     * Registers the service worker now and waits until it is active (needs no permission). Call it when the page
+     * loads: a later register() from a tap then subscribes at once, which Safari (iPhone home-screen apps) requires.
+     * Does nothing with autoRegisterServiceWorker: false. Never throws.
+     */
+    prepareWebPush(): Promise<void>;
+    /**
+     * How Web Push went at the last register(): `subscribed`, `off`, `no-worker`, `no-push-manager`, `no-vapid-key`,
+     * `failed: <error>` (Safari: `failed: NotAllowedError: …` = call register() again from a tap), or null before it.
+     */
+    getWebPushStatus(): string | null;
     getInitialMessage(): AbrovaPushMessage | null;
     /**
      * Get current badge count

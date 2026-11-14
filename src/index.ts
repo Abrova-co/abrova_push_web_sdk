@@ -994,6 +994,27 @@ class AbrovaPush {
   async register(options?: RegisterOptions): Promise<string> {
     this.registerRequested = true;
     try {
+      // Safari (iPhone home-screen apps) allows a Web Push subscription only right after the user's tap. With the
+      // worker already prepared (prepareWebPush) and the key known, subscribe first: nothing slow runs before it, and
+      // when permission is not decided yet the subscription itself shows the prompt.
+      const earlyKey = this.vapidPublicKey || this.config.vapidPublicKey;
+      if (
+        earlyKey &&
+        this.serviceWorkerRegistration?.active &&
+        typeof Notification !== 'undefined' &&
+        Notification.permission !== 'denied' &&
+        typeof window !== 'undefined' &&
+        'PushManager' in window
+      ) {
+        try {
+          this.pushSubscription = await this.subscribeToPush(earlyKey);
+          this.webPushStatus = 'subscribed';
+        } catch (e) {
+          this.webPushStatus = this.webPushFailure(e);
+          this.log(AbrovaPushLogLevel.WARNING, 'Web Push subscription failed:', e);
+        }
+      }
+
       // Ask for permission first: Safari (iOS home screen apps) shows the prompt only shortly after the user's tap,
       // so nothing slow (server config, service worker) may run before it.
       this.trackEvent(AbrovaPushAnalyticsEvent.PERMISSION_REQUESTED);
@@ -1019,8 +1040,8 @@ class AbrovaPush {
         await this.waitForConfig();
       }
 
-      // Register service worker if enabled
-      if (this.config.autoRegisterServiceWorker) {
+      // Register service worker if enabled (prepareWebPush may have done it already)
+      if (this.config.autoRegisterServiceWorker && !this.serviceWorkerRegistration?.active) {
         try {
           await this.registerServiceWorker();
         } catch (e) {
@@ -1032,7 +1053,9 @@ class AbrovaPush {
       // Get Web Push subscription for background notifications
       // Use VAPID key from server (preferred) or from config
       const vapidKey = this.vapidPublicKey || this.config.vapidPublicKey;
-      if (vapidKey && this.serviceWorkerRegistration) {
+      if (this.webPushStatus === 'subscribed' && this.pushSubscription) {
+        // Subscribed at the start of this call.
+      } else if (vapidKey && this.serviceWorkerRegistration) {
         try {
           this.pushSubscription = await this.subscribeToPush(vapidKey);
           this.webPushStatus = 'subscribed';
@@ -1311,6 +1334,30 @@ class AbrovaPush {
    * Get the message that launched/opened the app (when user tapped a notification)
    * Returns null if the app was not opened from a notification tap
    */
+  /**
+   * Registers the service worker now and waits until it is active (needs no permission). Call it when the page
+   * loads: a later register() from a tap then subscribes at once, which Safari (iPhone home-screen apps) requires.
+   * Does nothing with autoRegisterServiceWorker: false. Never throws.
+   */
+  async prepareWebPush(): Promise<void> {
+    try {
+      if (!this.config.autoRegisterServiceWorker || typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+      if (!this.mqttConfigFetched) await this.waitForConfig().catch(() => undefined);
+      if (!this.serviceWorkerRegistration) await this.registerServiceWorker();
+      if (this.serviceWorkerRegistration) await this.waitForActiveWorker(this.serviceWorkerRegistration);
+    } catch (e) {
+      this.log(AbrovaPushLogLevel.WARNING, 'Web Push preparation failed:', e);
+    }
+  }
+
+  /**
+   * How Web Push went at the last register(): `subscribed`, `off`, `no-worker`, `no-push-manager`, `no-vapid-key`,
+   * `failed: <error>` (Safari: `failed: NotAllowedError: …` = call register() again from a tap), or null before it.
+   */
+  getWebPushStatus(): string | null {
+    return this.webPushStatus;
+  }
+
   getInitialMessage(): AbrovaPushMessage | null {
     return this.initialMessage;
   }
