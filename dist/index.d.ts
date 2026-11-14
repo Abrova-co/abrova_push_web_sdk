@@ -400,6 +400,8 @@ declare class AbrovaPush {
      * `failed: <error name>: <message>`.
      */
     private webPushStatus;
+    /** metadata.webPushContext: what the browser reported around a failed attempt. */
+    private webPushContextText;
     private connectionState;
     private maxReconnectAttempts;
     private connectionStarted;
@@ -699,6 +701,12 @@ declare class AbrovaPush {
     /** Resolves once the registration has an active worker (at most [timeoutMs]; subscribe() then reports the error). */
     private waitForActiveWorker;
     private webPushFailure;
+    /**
+     * What the browser said when Web Push was attempted (sent as `metadata.webPushContext`): notification permission,
+     * the push manager's own permission state, whether the user's tap was still active, whether a worker controls the
+     * page and the worker's scope. Explains a refusal such as Safari's "User denied push permission". Never throws.
+     */
+    private webPushContext;
     /** Why no subscription was attempted. */
     private webPushSkipped;
     /** `standalone` for an installed web app (home screen), else `browser`. */

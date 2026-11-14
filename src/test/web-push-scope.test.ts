@@ -168,6 +168,7 @@ describe('prepared worker: register() subscribes first (Safari needs it right af
       pushManager: { getSubscription: jest.fn(async () => null), subscribe: jest.fn(async () => { throw refused; }) },
     };
     await push.register().catch(() => undefined);
-    expect(push.getWebPushStatus()).toBe('failed: NotAllowedError: User denied push permission');
+    expect(push.getWebPushStatus()).toBe('failed (after permission): NotAllowedError: User denied push permission');
+    expect(push.webPushContextText).toMatch(/^before: notification=granted.* \| after: notification=granted.* \|\| then: notification=granted/);
   });
 });

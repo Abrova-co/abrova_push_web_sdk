@@ -604,6 +604,8 @@ class AbrovaPush {
    * `failed: <error name>: <message>`.
    */
   private webPushStatus: string | null = null;
+  /** metadata.webPushContext: what the browser reported around a failed attempt. */
+  private webPushContextText: string | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private maxReconnectAttempts = 0;
   // Real-time connection lifecycle (set while the SDK keeps a connection up)
@@ -993,6 +995,7 @@ class AbrovaPush {
    */
   async register(options?: RegisterOptions): Promise<string> {
     this.registerRequested = true;
+    this.webPushContextText = null;
     try {
       // Safari (iPhone home-screen apps) allows a Web Push subscription only right after the user's tap. With the
       // worker already prepared (prepareWebPush) and the key known, subscribe first: nothing slow runs before it, and
@@ -1006,11 +1009,13 @@ class AbrovaPush {
         typeof window !== 'undefined' &&
         'PushManager' in window
       ) {
+        const before = await this.webPushContext();
         try {
           this.pushSubscription = await this.subscribeToPush(earlyKey);
           this.webPushStatus = 'subscribed';
         } catch (e) {
-          this.webPushStatus = this.webPushFailure(e);
+          this.webPushStatus = this.webPushFailure(e, 'first');
+          this.webPushContextText = `before: ${before} | after: ${await this.webPushContext()}`;
           this.log(AbrovaPushLogLevel.WARNING, 'Web Push subscription failed:', e);
         }
       }
@@ -1061,7 +1066,8 @@ class AbrovaPush {
           this.webPushStatus = 'subscribed';
           this.log(AbrovaPushLogLevel.INFO, 'Web Push subscription created for background notifications');
         } catch (e) {
-          this.webPushStatus = this.webPushFailure(e);
+          this.webPushStatus = this.webPushFailure(e, 'after permission');
+          this.webPushContextText = `${this.webPushContextText ? `${this.webPushContextText} || ` : ''}then: ${await this.webPushContext()}`.slice(0, 500);
           this.log(AbrovaPushLogLevel.WARNING, 'Web Push subscription failed (will use MQTT only):', e);
         }
       } else {
@@ -1821,9 +1827,36 @@ class AbrovaPush {
     });
   }
 
-  private webPushFailure(e: unknown): string {
+  private webPushFailure(e: unknown, step = ''): string {
     const err = e as { name?: string; message?: string } | null;
-    return `failed: ${err?.name ?? 'Error'}: ${err?.message ?? String(e)}`.slice(0, 200);
+    return `failed${step ? ` (${step})` : ''}: ${err?.name ?? 'Error'}: ${err?.message ?? String(e)}`.slice(0, 200);
+  }
+
+  /**
+   * What the browser said when Web Push was attempted (sent as `metadata.webPushContext`): notification permission,
+   * the push manager's own permission state, whether the user's tap was still active, whether a worker controls the
+   * page and the worker's scope. Explains a refusal such as Safari's "User denied push permission". Never throws.
+   */
+  private async webPushContext(): Promise<string> {
+    const parts: string[] = [];
+    try {
+      parts.push(`notification=${typeof Notification !== 'undefined' ? Notification.permission : 'none'}`);
+      const reg = this.serviceWorkerRegistration;
+      if (reg?.pushManager?.permissionState) {
+        try {
+          parts.push(`push=${await reg.pushManager.permissionState({ userVisibleOnly: true })}`);
+        } catch (e) {
+          parts.push(`push=error:${(e as Error)?.name ?? e}`);
+        }
+      }
+      const activation = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+      if (activation) parts.push(`tap=${activation.isActive ? 'active' : activation.hasBeenActive ? 'used' : 'none'}`);
+      parts.push(`controlled=${typeof navigator !== 'undefined' && navigator.serviceWorker?.controller ? 'yes' : 'no'}`);
+      if (reg) parts.push(`scope=${new URL(reg.scope).pathname}`, `worker=${reg.active ? 'active' : reg.installing ? 'installing' : reg.waiting ? 'waiting' : 'none'}`);
+    } catch {
+      // best effort
+    }
+    return parts.join(' ').slice(0, 300);
   }
 
   /** Why no subscription was attempted. */
@@ -1993,6 +2026,7 @@ class AbrovaPush {
           language: typeof navigator !== 'undefined' ? navigator.language : undefined,
           url: typeof window !== 'undefined' ? window.location.origin : undefined,
           ...(this.webPushStatus ? { webPush: this.webPushStatus } : {}),
+          ...(this.webPushContextText && this.webPushStatus !== 'subscribed' ? { webPushContext: this.webPushContextText } : {}),
           displayMode: this.displayMode(),
         },
         ...attrs,
