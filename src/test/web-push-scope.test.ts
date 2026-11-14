@@ -88,3 +88,33 @@ describe('service worker: a tap with no window open', () => {
     expect(JSON.parse(url.searchParams.get('abrova_push_notification')!)).toMatchObject({ title: 'T', body: 'B', messageId: 'm1' });
   });
 });
+
+describe('subscription waits for an active worker', () => {
+  it('subscribes only after the installing worker is activated (Safari refuses before)', async () => {
+    const push: any = new AbrovaPush({ apiKey: 'ab_live_test123' });
+    const listeners: Array<() => void> = [];
+    const worker: any = { state: 'installing', addEventListener: (_: string, fn: () => void) => listeners.push(fn), removeEventListener: jest.fn() };
+    const order: string[] = [];
+    const registration: any = {
+      active: null,
+      installing: worker,
+      waiting: null,
+      pushManager: {
+        getSubscription: jest.fn(async () => null),
+        subscribe: jest.fn(async () => {
+          order.push(`subscribe while ${worker.state}`);
+          return { endpoint: 'https://web.push.apple.com/x', toJSON: () => ({ endpoint: 'https://web.push.apple.com/x', keys: {} }) };
+        }),
+      },
+    };
+    push.serviceWorkerRegistration = registration;
+    const pending = push.subscribeToPush('BEl62iUYgUivxIkv69yViEuiBIa-Ib9-SkvMeAtA3LFgDzkrxZJjSgSnfckjBJuBkr3qBUYIHBQFLXYp5Nksh8U');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(registration.pushManager.subscribe).not.toHaveBeenCalled();
+    worker.state = 'activated';
+    registration.active = worker;
+    listeners.forEach((fn) => fn());
+    await pending;
+    expect(order).toEqual(['subscribe while activated']);
+  });
+});

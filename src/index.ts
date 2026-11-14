@@ -598,6 +598,12 @@ class AbrovaPush {
   private pnSocket: PNSocket | null = null;
   private serviceWorkerRegistration: ServiceWorkerRegistration | null = null;
   private pushSubscription: PushSubscription | null = null;
+  /**
+   * How the last Web Push attempt went, sent with the registration (`metadata.webPush`) so a missing subscription can
+   * be explained from the server: `subscribed`, `off`, `no-worker`, `no-push-manager`, `no-vapid-key` or
+   * `failed: <error name>: <message>`.
+   */
+  private webPushStatus: string | null = null;
   private connectionState: ConnectionState = 'disconnected';
   private maxReconnectAttempts = 0;
   // Real-time connection lifecycle (set while the SDK keeps a connection up)
@@ -1015,7 +1021,12 @@ class AbrovaPush {
 
       // Register service worker if enabled
       if (this.config.autoRegisterServiceWorker) {
-        await this.registerServiceWorker();
+        try {
+          await this.registerServiceWorker();
+        } catch (e) {
+          this.webPushStatus = `failed: worker: ${(e as Error)?.message ?? e}`.slice(0, 200);
+          throw e;
+        }
       }
 
       // Get Web Push subscription for background notifications
@@ -1024,10 +1035,14 @@ class AbrovaPush {
       if (vapidKey && this.serviceWorkerRegistration) {
         try {
           this.pushSubscription = await this.subscribeToPush(vapidKey);
+          this.webPushStatus = 'subscribed';
           this.log(AbrovaPushLogLevel.INFO, 'Web Push subscription created for background notifications');
         } catch (e) {
+          this.webPushStatus = this.webPushFailure(e);
           this.log(AbrovaPushLogLevel.WARNING, 'Web Push subscription failed (will use MQTT only):', e);
         }
+      } else {
+        this.webPushStatus = this.webPushSkipped(vapidKey);
       }
 
       // Register with backend.
@@ -1740,6 +1755,48 @@ class AbrovaPush {
     });
   }
 
+  /** Resolves once the registration has an active worker (at most [timeoutMs]; subscribe() then reports the error). */
+  private waitForActiveWorker(registration: ServiceWorkerRegistration, timeoutMs = 10000): Promise<void> {
+    if (registration.active) return Promise.resolve();
+    const worker = registration.installing ?? registration.waiting;
+    if (!worker) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        worker.removeEventListener('statechange', onChange);
+        resolve();
+      };
+      const onChange = () => {
+        if (worker.state === 'activated' || worker.state === 'redundant') done();
+      };
+      const timer = setTimeout(done, timeoutMs);
+      worker.addEventListener('statechange', onChange);
+    });
+  }
+
+  private webPushFailure(e: unknown): string {
+    const err = e as { name?: string; message?: string } | null;
+    return `failed: ${err?.name ?? 'Error'}: ${err?.message ?? String(e)}`.slice(0, 200);
+  }
+
+  /** Why no subscription was attempted. */
+  private webPushSkipped(vapidKey: string | null | undefined): string {
+    if (!this.config.autoRegisterServiceWorker && !this.serviceWorkerRegistration) return 'off';
+    if (typeof window !== 'undefined' && !('PushManager' in window)) return 'no-push-manager';
+    if (!this.serviceWorkerRegistration) return 'no-worker';
+    if (!vapidKey) return 'no-vapid-key';
+    return 'off';
+  }
+
+  /** `standalone` for an installed web app (home screen), else `browser`. */
+  private displayMode(): string | undefined {
+    if (typeof window === 'undefined') return undefined;
+    const standalone =
+      (typeof window.matchMedia === 'function' && window.matchMedia('(display-mode: standalone)').matches) ||
+      (navigator as Navigator & { standalone?: boolean }).standalone === true;
+    return standalone ? 'standalone' : 'browser';
+  }
+
   private async requestNotificationPermission(): Promise<NotificationPermission> {
     if (typeof Notification === 'undefined') {
       return 'denied';
@@ -1807,6 +1864,9 @@ class AbrovaPush {
       }
     }
 
+    // A subscription needs an active worker. Right after register() it is often still installing: Chrome usually
+    // gets there in time, Safari (iPhone) does not and refuses the subscription.
+    await this.waitForActiveWorker(this.serviceWorkerRegistration);
     const subscription = await this.serviceWorkerRegistration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: this.urlBase64ToUint8Array(vapidPublicKey) as BufferSource,
@@ -1885,6 +1945,8 @@ class AbrovaPush {
           userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
           language: typeof navigator !== 'undefined' ? navigator.language : undefined,
           url: typeof window !== 'undefined' ? window.location.origin : undefined,
+          ...(this.webPushStatus ? { webPush: this.webPushStatus } : {}),
+          displayMode: this.displayMode(),
         },
         ...attrs,
       };
@@ -2549,7 +2611,15 @@ class AbrovaPush {
       let subscription: PushSubscription | null = null;
       const vapidKey = this.vapidPublicKey || this.config.vapidPublicKey;
       if (vapidKey && this.serviceWorkerRegistration) {
-        subscription = await this.subscribeToPush(vapidKey);
+        try {
+          subscription = await this.subscribeToPush(vapidKey);
+          this.webPushStatus = 'subscribed';
+        } catch (e) {
+          this.webPushStatus = this.webPushFailure(e);
+          throw e;
+        }
+      } else {
+        this.webPushStatus = this.webPushSkipped(vapidKey);
       }
 
       const reason = getRefreshReason(

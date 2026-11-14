@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.17] - 2026-11-15
+
+### Fixed
+- Web Push subscribes only once the service worker is active. Right after it is registered the worker is often still
+  installing; Safari (iPhone home-screen apps) then refused the subscription and the app silently fell back to the
+  live connection, which works only while the app is open.
+
+### Added
+- The registration reports how Web Push went (`metadata.webPush`: `subscribed`, `off`, `no-worker`,
+  `no-push-manager`, `no-vapid-key` or `failed: …`) and whether the app runs installed (`metadata.displayMode`:
+  `standalone` or `browser`), so a device without background notifications can be explained.
+
 ## [0.1.16] - 2026-11-15
 
 ### Added

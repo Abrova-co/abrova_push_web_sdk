@@ -394,6 +394,12 @@ declare class AbrovaPush {
     private pnSocket;
     private serviceWorkerRegistration;
     private pushSubscription;
+    /**
+     * How the last Web Push attempt went, sent with the registration (`metadata.webPush`) so a missing subscription can
+     * be explained from the server: `subscribed`, `off`, `no-worker`, `no-push-manager`, `no-vapid-key` or
+     * `failed: <error name>: <message>`.
+     */
+    private webPushStatus;
     private connectionState;
     private maxReconnectAttempts;
     private connectionStarted;
@@ -679,6 +685,13 @@ declare class AbrovaPush {
      * back to its URL exactly as before.
      */
     private storeServiceWorkerConfig;
+    /** Resolves once the registration has an active worker (at most [timeoutMs]; subscribe() then reports the error). */
+    private waitForActiveWorker;
+    private webPushFailure;
+    /** Why no subscription was attempted. */
+    private webPushSkipped;
+    /** `standalone` for an installed web app (home screen), else `browser`. */
+    private displayMode;
     private requestNotificationPermission;
     /**
      * Whether an existing subscription was created with the given VAPID key.
