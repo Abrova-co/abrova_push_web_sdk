@@ -172,3 +172,24 @@ describe('prepared worker: register() subscribes first (Safari needs it right af
     expect(push.webPushContextText).toMatch(/^before: notification=granted.* \| after: notification=granted.* \|\| then: notification=granted/);
   });
 });
+
+describe('one registration of the worker', () => {
+  it('removes the same worker under another scope, keeps the current one and other workers', async () => {
+    const push: any = new AbrovaPush({ apiKey: 'ab_live_test123', serviceWorkerScope: '/' });
+    const mk = (scope: string, script: string) => ({ scope, active: { scriptURL: script }, unregister: jest.fn(async () => true) });
+    const current = mk('http://localhost/', 'http://localhost/abrova-push-sw.js?abrovaApiKey=k');
+    const old = mk('http://localhost/abrova-push/', 'http://localhost/abrova-push-sw.js?abrovaApiKey=k');
+    const other = mk('http://localhost/other/', 'http://localhost/other-sw.js');
+    push.serviceWorkerRegistration = current;
+    const original = (navigator.serviceWorker as any).getRegistrations;
+    (navigator.serviceWorker as any).getRegistrations = jest.fn(async () => [current, old, other]);
+    try {
+      await push.removeOtherScopes();
+    } finally {
+      (navigator.serviceWorker as any).getRegistrations = original;
+    }
+    expect(old.unregister).toHaveBeenCalled();
+    expect(current.unregister).not.toHaveBeenCalled();
+    expect(other.unregister).not.toHaveBeenCalled();
+  });
+});

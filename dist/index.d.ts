@@ -592,6 +592,11 @@ declare class AbrovaPush {
      */
     prepareWebPush(): Promise<void>;
     /**
+     * The same worker registered under another scope (an older setup of this app, such as '/abrova-push/' before the
+     * worker moved to '/') is unregistered, so the phone keeps one subscription. Never throws.
+     */
+    private removeOtherScopes;
+    /**
      * How Web Push went at the last register(): `subscribed`, `off`, `no-worker`, `no-push-manager`, `no-vapid-key`,
      * `failed: <error>` (Safari: `failed: NotAllowedError: …` = call register() again from a tap), or null before it.
      */

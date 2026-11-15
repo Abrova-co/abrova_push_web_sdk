@@ -1351,8 +1351,28 @@ class AbrovaPush {
       if (!this.mqttConfigFetched) await this.waitForConfig().catch(() => undefined);
       if (!this.serviceWorkerRegistration) await this.registerServiceWorker();
       if (this.serviceWorkerRegistration) await this.waitForActiveWorker(this.serviceWorkerRegistration);
+      await this.removeOtherScopes();
     } catch (e) {
       this.log(AbrovaPushLogLevel.WARNING, 'Web Push preparation failed:', e);
+    }
+  }
+
+  /**
+   * The same worker registered under another scope (an older setup of this app, such as '/abrova-push/' before the
+   * worker moved to '/') is unregistered, so the phone keeps one subscription. Never throws.
+   */
+  private async removeOtherScopes(): Promise<void> {
+    try {
+      const own = new URL(this.config.serviceWorkerPath!, self.location.origin).pathname;
+      const keep = this.serviceWorkerRegistration?.scope;
+      const all = await navigator.serviceWorker.getRegistrations();
+      for (const registration of all) {
+        const script = registration.active?.scriptURL ?? registration.waiting?.scriptURL ?? registration.installing?.scriptURL;
+        if (!script || registration.scope === keep) continue;
+        if (new URL(script).pathname === own) await registration.unregister();
+      }
+    } catch {
+      // best effort
     }
   }
 

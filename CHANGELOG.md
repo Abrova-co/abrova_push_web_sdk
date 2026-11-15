@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.20] - 2026-11-15
+
+### Added
+- `prepareWebPush()` unregisters the same worker under another scope (an older setup of the app, such as
+  `/abrova-push/` before the worker moved to `/`), so a phone keeps one subscription.
+
 ## [0.1.19] - 2026-11-15
 
 ### Added
