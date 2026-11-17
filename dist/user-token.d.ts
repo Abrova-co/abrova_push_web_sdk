@@ -86,6 +86,14 @@ export declare class UserTokenManager {
     private forget;
     private callProvider;
 }
+/** The SDK's error counts, attached to Push API requests (see diagnostics.ts). */
+export interface ReportSource {
+    report(): {
+        headers: Record<string, string>;
+        sent: unknown;
+    } | null;
+    acknowledge(sent: any): void;
+}
 /**
  * The one place the SDK calls the Push API from. Adds the user token when one
  * is available and replays the request once when the server reports it
@@ -96,7 +104,9 @@ export declare class UserTokenManager {
 export declare class PushApiClient {
     private readonly tokens;
     private readonly onAuthError;
-    constructor(tokens: UserTokenManager, onAuthError: (event: AuthErrorEvent) => void);
+    private readonly diagnostics;
+    private readonly isPushApi;
+    constructor(tokens: UserTokenManager, onAuthError: (event: AuthErrorEvent) => void, diagnostics?: ReportSource | null, isPushApi?: (url: string) => boolean);
     fetch(url: string, init?: RequestInit): Promise<Response>;
     private fetchWithToken;
     /**

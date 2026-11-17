@@ -244,6 +244,27 @@ function withToken(init: RequestInit | undefined, token: string): RequestInit {
   };
 }
 
+function withHeaders(init: RequestInit | undefined, extra: Record<string, string>): RequestInit {
+  const headers: Record<string, string> = {};
+  const given = init?.headers;
+  if (given && typeof Headers !== 'undefined' && given instanceof Headers) {
+    given.forEach((value, key) => {
+      headers[key] = value;
+    });
+  } else if (Array.isArray(given)) {
+    for (const [key, value] of given) headers[key] = value;
+  } else if (given) {
+    Object.assign(headers, given as Record<string, string>);
+  }
+  return { ...init, headers: { ...headers, ...extra } };
+}
+
+/** The SDK's error counts, attached to Push API requests (see diagnostics.ts). */
+export interface ReportSource {
+  report(): { headers: Record<string, string>; sent: unknown } | null;
+  acknowledge(sent: any): void;
+}
+
 /**
  * The one place the SDK calls the Push API from. Adds the user token when one
  * is available and replays the request once when the server reports it
@@ -255,13 +276,44 @@ export class PushApiClient {
   constructor(
     private readonly tokens: UserTokenManager,
     private readonly onAuthError: (event: AuthErrorEvent) => void,
+    private readonly diagnostics: ReportSource | null = null,
+    private readonly isPushApi: (url: string) => boolean = () => false,
   ) {}
 
   fetch(url: string, init?: RequestInit): Promise<Response> {
+    // The SDK's error counts go to the Push API only, never to another host.
+    let report: ReturnType<ReportSource['report']> = null;
+    if (this.diagnostics && this.isPushApi(url)) {
+      try {
+        report = this.diagnostics.report();
+      } catch {
+        report = null;
+      }
+    }
+    const sendInit = report ? withHeaders(init, report.headers) : init;
     // No token source: the request is the same call, made at the same moment,
     // as before token support existed.
-    if (!this.tokens.hasSource()) return fetch(url, init);
-    return this.fetchWithToken(url, init);
+    const result = this.tokens.hasSource() ? this.fetchWithToken(url, sendInit) : fetch(url, sendInit);
+    if (!report) return result;
+    const sent = report.sent;
+    const diagnostics = this.diagnostics!;
+    // Cleared only once the server took them (2xx); otherwise sent again next
+    // time. The caller gets the same promise, at the same moment as before.
+    result.then(
+      (response) => {
+        if (response && response.ok) {
+          try {
+            diagnostics.acknowledge(sent);
+          } catch {
+            // ignore
+          }
+        }
+      },
+      () => {
+        // The request failed: the counts stay for the next one.
+      },
+    );
+    return result;
   }
 
   private async fetchWithToken(url: string, init?: RequestInit): Promise<Response> {

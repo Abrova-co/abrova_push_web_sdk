@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.21] - 2026-11-18
+
+### Added
+- `sendDiagnostics` (default `true`): the SDK counts its own errors by error code and sends the counts with its
+  next request to Abrova Push. Counts only, no personal data. Each error report also says why it happened: a short
+  reason from a fixed list (for example `timeout`, `offline`, `http503`) and, for the real-time connection, the port.
+  Never a message, address, user or device detail. `sendDiagnostics: false`: nothing is counted, kept or sent.
+- New error code `1007` (`CONNECTION_SETUP_FAILED`): the real-time connection could not be set up, before any
+  network traffic. `register()` no longer fails in that case; the error comes through `onError`.
+
 ## [0.1.20] - 2026-11-15
 
 ### Added

@@ -55,6 +55,7 @@ import {
   orderEndpoints,
   parseMqttEndpoints,
 } from './connection';
+import { SdkDiagnostics, classifyError, classifyRequestError, httpReason, isPushApiUrl } from './diagnostics';
 
 export { SDK_NAME, SDK_VERSION };
 export type { AuthErrorEvent, OnAuthErrorCallback, TokenProvider } from './user-token';
@@ -106,6 +107,8 @@ export enum AbrovaPushErrorCode {
   AUTHENTICATION_FAILED = 1004,
   SSL_ERROR = 1005,
   BROKER_UNAVAILABLE = 1006,
+  /** The real-time connection could not be set up (before any network traffic). */
+  CONNECTION_SETUP_FAILED = 1007,
 
   // Subscription errors (1100-1199)
   SUBSCRIPTION_FAILED = 1100,
@@ -155,6 +158,7 @@ const ERROR_MESSAGES: Record<AbrovaPushErrorCode, string> = {
   [AbrovaPushErrorCode.AUTHENTICATION_FAILED]: 'Authentication failed - invalid credentials',
   [AbrovaPushErrorCode.SSL_ERROR]: 'SSL/TLS handshake failed',
   [AbrovaPushErrorCode.BROKER_UNAVAILABLE]: 'MQTT broker is unavailable',
+  [AbrovaPushErrorCode.CONNECTION_SETUP_FAILED]: 'Connection setup failed',
   [AbrovaPushErrorCode.SUBSCRIPTION_FAILED]: 'Failed to subscribe to topic',
   [AbrovaPushErrorCode.UNSUBSCRIPTION_FAILED]: 'Failed to unsubscribe from topic',
   [AbrovaPushErrorCode.INVALID_TOPIC]: 'Invalid topic format',
@@ -397,6 +401,15 @@ export interface AbrovaPushConfig {
    * Without it the SDK behaves exactly as before.
    */
   tokenProvider?: TokenProvider;
+  /**
+   * Send counts of the SDK's own errors with its requests to Abrova Push
+   * (default: true). The SDK counts its errors by error code, with a short
+   * reason from a fixed list (for example `timeout` or `http503`) and the
+   * connection port, and sends the counts with its next request. Never a
+   * message, address, user or device detail. `false`: nothing is counted,
+   * kept or sent.
+   */
+  sendDiagnostics?: boolean;
 }
 
 /**
@@ -655,6 +668,11 @@ class AbrovaPush {
   // Signed user token (memory only) and the single door to the Push API
   private readonly userTokens: UserTokenManager;
   private readonly api: PushApiClient;
+  private readonly diagnostics: SdkDiagnostics;
+  // Ports of the endpoints of the current connection round (for error reports).
+  private roundPorts: number[] = [];
+  // Reason of each error made by fail(), for errors reported again under another code.
+  private readonly errorReasons = new WeakMap<object, string>();
 
   // Set once the app calls register() so the background refresh stands down
   private registerRequested = false;
@@ -688,6 +706,7 @@ class AbrovaPush {
       serviceWorkerScope: '/',
       autoRegisterServiceWorker: true,
       autoRefresh: true,
+      sendDiagnostics: true,
       mqttQos: 1,
       maxReconnectAttempts: 0,
       logLevel: AbrovaPushLogLevel.ERROR,
@@ -698,7 +717,13 @@ class AbrovaPush {
     this.logLevel = this.config.logLevel!;
 
     this.userTokens = new UserTokenManager(this.config.tokenProvider ?? null);
-    this.api = new PushApiClient(this.userTokens, (event) => this.emitAuthError(event));
+    this.diagnostics = new SdkDiagnostics(this.config.sendDiagnostics !== false);
+    this.api = new PushApiClient(
+      this.userTokens,
+      (event) => this.emitAuthError(event),
+      this.diagnostics,
+      (url) => isPushApiUrl(url, ABROVA_PUSH_SERVER_URL),
+    );
 
     this.inbox = new AbrovaInbox({
       serverUrl: ABROVA_PUSH_SERVER_URL,
@@ -798,7 +823,10 @@ class AbrovaPush {
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+        const httpError = new Error(`HTTP ${response.status}`);
+        httpError.name = 'HttpError';
+        (httpError as Error & { status?: number }).status = response.status;
+        throw httpError;
       }
 
       const data = await response.json();
@@ -814,7 +842,11 @@ class AbrovaPush {
       this.log(AbrovaPushLogLevel.INFO, `Config fetched successfully, vapid=${!!this.vapidPublicKey}`);
     } catch (error) {
       this.log(AbrovaPushLogLevel.ERROR, 'Failed to fetch config:', error);
-      this.emitError(AbrovaPushErrorCode.INVALID_CONFIG, `Failed to fetch config: ${(error as Error).message}`);
+      this.emitError(
+        AbrovaPushErrorCode.INVALID_CONFIG,
+        `Failed to fetch config: ${(error as Error).message}`,
+        classifyRequestError(error),
+      );
     }
   }
 
@@ -916,7 +948,12 @@ class AbrovaPush {
   // Error Handling
   // ==========================================================================
 
-  private emitError(code: AbrovaPushErrorCode, details?: string): void {
+  /**
+   * Reports an error to the app's callbacks. `reason` (a word from the fixed
+   * list, see diagnostics.ts) and `port` only go into the SDK's error counts.
+   */
+  private emitError(code: AbrovaPushErrorCode, details?: string, reason?: string, port?: number): void {
+    this.countError(code, reason, port);
     const error = new AbrovaPushError(code, details);
     this.log(AbrovaPushLogLevel.ERROR, `Error [${code}]: ${error.message}`, details);
 
@@ -932,6 +969,23 @@ class AbrovaPush {
       errorMessage: error.message,
       details,
     });
+  }
+
+  /** Counts an error for the SDK's error report. Never throws. */
+  private countError(code: AbrovaPushErrorCode, reason?: string, port?: number): void {
+    try {
+      this.diagnostics.count(code, reason, port);
+    } catch {
+      // Counting never matters more than the SDK's work.
+    }
+  }
+
+  /** An error the SDK throws to the app, counted for the error report. */
+  private fail(code: AbrovaPushErrorCode, details: string | undefined, reason: string): AbrovaPushError {
+    this.countError(code, reason);
+    const error = new AbrovaPushError(code, details);
+    this.errorReasons.set(error, reason);
+    return error;
   }
 
   /**
@@ -1027,13 +1081,13 @@ class AbrovaPush {
 
       if (permission === 'denied') {
         this.trackEvent(AbrovaPushAnalyticsEvent.PERMISSION_DENIED);
-        this.emitError(AbrovaPushErrorCode.PERMISSION_DENIED);
+        this.emitError(AbrovaPushErrorCode.PERMISSION_DENIED, undefined, 'security');
         throw new AbrovaPushError(AbrovaPushErrorCode.PERMISSION_DENIED);
       }
 
       if (permission === 'default') {
         this.trackEvent(AbrovaPushAnalyticsEvent.PERMISSION_DENIED);
-        this.emitError(AbrovaPushErrorCode.PERMISSION_DISMISSED, 'User dismissed the permission prompt');
+        this.emitError(AbrovaPushErrorCode.PERMISSION_DISMISSED, 'User dismissed the permission prompt', 'cancelled');
         throw new AbrovaPushError(AbrovaPushErrorCode.PERMISSION_DISMISSED);
       }
 
@@ -1106,7 +1160,7 @@ class AbrovaPush {
         throw error;
       }
       this.log(AbrovaPushLogLevel.ERROR, 'Registration failed:', error);
-      this.emitError(AbrovaPushErrorCode.REGISTRATION_FAILED, (error as Error).message);
+      this.emitError(AbrovaPushErrorCode.REGISTRATION_FAILED, (error as Error).message, classifyError(error));
       throw error;
     }
   }
@@ -1176,7 +1230,7 @@ class AbrovaPush {
    */
   async subscribeTopic(topic: string): Promise<void> {
     if (!topic || topic.trim() === '') {
-      this.emitError(AbrovaPushErrorCode.INVALID_TOPIC, 'Topic cannot be empty');
+      this.emitError(AbrovaPushErrorCode.INVALID_TOPIC, 'Topic cannot be empty', 'arg');
       return;
     }
 
@@ -1442,9 +1496,10 @@ class AbrovaPush {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new AbrovaPushError(
+        throw this.fail(
           AbrovaPushErrorCode.SERVER_ERROR,
-          errorData.message || `HTTP ${response.status}`
+          errorData.message || `HTTP ${response.status}`,
+          httpReason(response.status) ?? 'other',
         );
       }
 
@@ -1456,7 +1511,7 @@ class AbrovaPush {
       }
     } catch (error) {
       if (error instanceof AbrovaPushError) throw error;
-      throw new AbrovaPushError(AbrovaPushErrorCode.NETWORK_ERROR, (error as Error).message);
+      throw this.fail(AbrovaPushErrorCode.NETWORK_ERROR, (error as Error).message, classifyRequestError(error));
     }
   }
 
@@ -1742,7 +1797,7 @@ class AbrovaPush {
 
   private async registerServiceWorker(): Promise<void> {
     if (!('serviceWorker' in navigator)) {
-      throw new AbrovaPushError(AbrovaPushErrorCode.SERVICE_NOT_RUNNING, 'Service Workers not supported');
+      throw this.fail(AbrovaPushErrorCode.SERVICE_NOT_RUNNING, 'Service Workers not supported', 'state');
     }
 
     try {
@@ -1772,7 +1827,7 @@ class AbrovaPush {
       this.log(AbrovaPushLogLevel.INFO, 'Service Worker registered');
     } catch (error) {
       this.log(AbrovaPushLogLevel.ERROR, 'Service Worker registration failed:', error);
-      throw new AbrovaPushError(AbrovaPushErrorCode.SERVICE_NOT_RUNNING, (error as Error).message);
+      throw this.fail(AbrovaPushErrorCode.SERVICE_NOT_RUNNING, (error as Error).message, classifyError(error));
     }
   }
 
@@ -2076,9 +2131,10 @@ class AbrovaPush {
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new AbrovaPushError(
+        throw this.fail(
           AbrovaPushErrorCode.SERVER_ERROR,
-          errorData.message || `HTTP ${response.status}`
+          errorData.message || `HTTP ${response.status}`,
+          httpReason(response.status) ?? 'other',
         );
       }
 
@@ -2129,7 +2185,7 @@ class AbrovaPush {
       return data;
     } catch (error) {
       if (error instanceof AbrovaPushError) throw error;
-      throw new AbrovaPushError(AbrovaPushErrorCode.NETWORK_ERROR, (error as Error).message);
+      throw this.fail(AbrovaPushErrorCode.NETWORK_ERROR, (error as Error).message, classifyRequestError(error));
     }
   }
 
@@ -2181,14 +2237,14 @@ class AbrovaPush {
     // Check if we have JWT token for authentication
     if (!this.mqttConfig.token) {
       this.log(AbrovaPushLogLevel.ERROR, 'Connection token not available. Device must be registered first.');
-      this.emitError(AbrovaPushErrorCode.AUTHENTICATION_FAILED, 'Connection token not available');
+      this.emitError(AbrovaPushErrorCode.AUTHENTICATION_FAILED, 'Connection token not available', 'state');
       return;
     }
 
     const fallback = this.defaultEndpoint();
     if (!fallback) {
       this.log(AbrovaPushLogLevel.ERROR, 'Gateway config incomplete');
-      this.emitError(AbrovaPushErrorCode.INVALID_CONFIG, 'Gateway config incomplete');
+      this.emitError(AbrovaPushErrorCode.INVALID_CONFIG, 'Gateway config incomplete', 'arg');
       return;
     }
 
@@ -2199,26 +2255,41 @@ class AbrovaPush {
 
     // Build PNConfig using the protocol's builder. The socket owns reconnection:
     // backoff 1 s .. 60 s with jitter, endpoint failover, 30 s keepalive.
-    const pnConfig = new PNConfigBuilder()
-      .gateway(fallback.host)
-      .port(fallback.port)
-      .clientId(clientId)
-      .auth(PNAuthFactory.token(this.mqttConfig.token))
-      .secure(fallback.secure)
-      .wsPath(fallback.path)
-      .freshStart(false)
-      .heartbeatInterval(30)
-      .autoReconnect(true)
-      .maxReconnectAttempts(this.maxReconnectAttempts)
-      .reconnectDelay(1000)
-      .maxReconnectDelay(60000)
-      .connectionTimeout(10)
-      .build();
+    let socket: PNSocket;
+    try {
+      const pnConfig = new PNConfigBuilder()
+        .gateway(fallback.host)
+        .port(fallback.port)
+        .clientId(clientId)
+        .auth(PNAuthFactory.token(this.mqttConfig.token))
+        .secure(fallback.secure)
+        .wsPath(fallback.path)
+        .freshStart(false)
+        .heartbeatInterval(30)
+        .autoReconnect(true)
+        .maxReconnectAttempts(this.maxReconnectAttempts)
+        .reconnectDelay(1000)
+        .maxReconnectDelay(60000)
+        .connectionTimeout(10)
+        .build();
 
-    const socket = new PNSocket(pnConfig);
+      socket = new PNSocket(pnConfig);
+    } catch (error) {
+      this.connectionSetupFailed(error, fallback.port);
+      return;
+    }
     this.pnSocket = socket;
+    this.roundPorts = [fallback.port];
+    // True from the moment an attempt starts until the current task's
+    // microtasks ran. Network events always arrive in a later task, so an
+    // attempt that already failed while it is true never reached the network.
+    let preparing = false;
 
-    socket.setEndpointProvider(() => this.endpointsForRound());
+    socket.setEndpointProvider(() => {
+      const endpoints = this.endpointsForRound();
+      this.roundPorts = endpoints.map((e) => e.port);
+      return endpoints;
+    });
     socket.addEndpointListener((endpoint) => {
       this.endpointMemory.saveWinner(networkKey(), endpoint as MqttEndpoint);
     });
@@ -2230,6 +2301,12 @@ class AbrovaPush {
       onStateChanged: (state: PNState) => {
         if (!isCurrent()) return;
         this.log(AbrovaPushLogLevel.DEBUG, `Connection state changed: ${state}`);
+        if (state === PNState.CONNECTING) {
+          preparing = true;
+          Promise.resolve().then(() => {
+            preparing = false;
+          });
+        }
         if (state === PNState.CONNECTING && this.connectionState !== 'connecting') {
           this.setConnectionState('connecting');
         }
@@ -2282,7 +2359,16 @@ class AbrovaPush {
         'Gateway error:',
         error.message,
       );
+      if (preparing && socket.state === PNState.DISCONNECTED) {
+        // The attempt failed in the same task it started in, before any
+        // network traffic: the client could not be created.
+        this.setConnectionState('error');
+        this.emitError(AbrovaPushErrorCode.CONNECTION_SETUP_FAILED, error.message, classifyError(error), this.errorPort(socket));
+        return;
+      }
       this.setConnectionState('error');
+      const reason = classifyError(error);
+      const port = this.errorPort(socket);
 
       // Map PNProtocolError to AbrovaPushErrorCode
       let errorCode = AbrovaPushErrorCode.CONNECTION_FAILED;
@@ -2296,6 +2382,7 @@ class AbrovaPush {
         // over to another endpoint on a rejection; it backs off until the new
         // token is in place and reconnectImmediately() is called.
         if (errorMessage.includes('not authorized')) {
+          this.countError(errorCode, reason, port);
           this.refreshTokenAndReconnect(socket);
           return;
         }
@@ -2305,7 +2392,7 @@ class AbrovaPush {
         errorCode = AbrovaPushErrorCode.SSL_ERROR;
       }
 
-      this.emitError(errorCode, error.message);
+      this.emitError(errorCode, error.message, reason, port);
     });
 
     this.connectionStarted = true;
@@ -2313,7 +2400,47 @@ class AbrovaPush {
 
     // Open connection
     this.log(AbrovaPushLogLevel.DEBUG, 'Opening connection to gateway...');
-    socket.open();
+    try {
+      socket.open();
+    } catch (error) {
+      if (this.pnSocket === socket) {
+        this.pnSocket = null;
+        try {
+          socket.close();
+        } catch {
+          // ignore
+        }
+        this.connectionSetupFailed(error, fallback.port);
+      }
+      return;
+    }
+  }
+
+  /** The real-time connection could not be prepared (no network traffic yet). */
+  private connectionSetupFailed(error: unknown, port: number): void {
+    this.log(AbrovaPushLogLevel.ERROR, 'Connection setup failed:', (error as Error)?.message ?? error);
+    this.setConnectionState('error');
+    this.emitError(
+      AbrovaPushErrorCode.CONNECTION_SETUP_FAILED,
+      (error as Error)?.message,
+      classifyError(error),
+      port,
+    );
+  }
+
+  /**
+   * Port of the endpoint a connection error belongs to: the connected one, or
+   * the one port every endpoint of the round shares. Undefined when unknown.
+   */
+  private errorPort(socket: PNSocket): number | undefined {
+    try {
+      const connected = (socket as { connectedEndpoint?: () => { port?: unknown } | null }).connectedEndpoint?.();
+      if (connected && typeof connected.port === 'number') return connected.port;
+    } catch {
+      // ignore
+    }
+    const ports = new Set(this.roundPorts);
+    return ports.size === 1 ? this.roundPorts[0] : undefined;
   }
 
   /**
@@ -2373,7 +2500,11 @@ class AbrovaPush {
       })
       .catch((refreshError) => {
         this.log(AbrovaPushLogLevel.ERROR, 'Token refresh failed:', refreshError);
-        this.emitError(AbrovaPushErrorCode.AUTHENTICATION_FAILED, 'Token expired and refresh failed');
+        this.emitError(
+          AbrovaPushErrorCode.AUTHENTICATION_FAILED,
+          'Token expired and refresh failed',
+          this.errorReasons.get(refreshError as object) ?? classifyError(refreshError),
+        );
       })
       .finally(() => {
         this.tokenRefreshInFlight = false;
@@ -2510,7 +2641,7 @@ class AbrovaPush {
       this.handleMqttMessage(message.channel, data);
     } catch (error) {
       this.log(AbrovaPushLogLevel.ERROR, 'Message parse error:', error);
-      this.emitError(AbrovaPushErrorCode.MESSAGE_PARSE_ERROR, (error as Error).message);
+      this.emitError(AbrovaPushErrorCode.MESSAGE_PARSE_ERROR, (error as Error).message, 'parse');
     }
   }
 

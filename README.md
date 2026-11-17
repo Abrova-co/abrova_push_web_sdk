@@ -119,6 +119,7 @@ const abrovaPush = new AbrovaPush({
   logLevel: AbrovaPushLogLevel.ERROR,       // Optional - log level
   appVersion: '2.0.0',                      // Optional - your app version (segment filter)
   autoRefresh: true,                        // Optional - background re-registration (default: true)
+  sendDiagnostics: true,                    // Optional - send counts of the SDK's own errors (default: true)
 });
 ```
 
@@ -130,6 +131,27 @@ hours have passed, the push subscription endpoint changed, or `appVersion`, the
 SDK version or the user ID changed. It never shows a permission prompt (it only
 runs when permission is already granted) and never throws. Calling `register()`
 yourself still always registers.
+
+### Diagnostics
+
+With `sendDiagnostics` on (the default), the SDK counts its own errors by error
+code and sends the counts with its next request to Abrova Push, so problems can
+be seen in the Abrova Console without your users' logs:
+
+```
+X-Abrova-SDK-Report: 1001=3 1402=1
+X-Abrova-SDK-Report-Reasons: 1001:timeout.443=3 1402:http503=1
+```
+
+Each count says why the error happened: a short reason from a fixed list (for
+example `timeout`, `offline`, `http503`, `ws1006` or `mqtt135`) and, for the
+real-time connection, the port. Never a message, address, user or device
+detail. At most 16 codes and 16 reasons are kept, in `localStorage` (in memory
+when storage is blocked), and they are removed once Abrova Push received them.
+The headers go only to Abrova Push.
+
+Turn it off with `sendDiagnostics: false`: then nothing is counted, kept or
+sent, and counts kept earlier are removed.
 
 ### SDK version
 
@@ -195,6 +217,14 @@ abrovaPush.onAppState((state) => {
 // Clean up
 unsub();
 ```
+
+### Error codes
+
+`error.code` is one of `AbrovaPushErrorCode`, the same numbers in every Abrova
+Push SDK: 1000-1099 connection, 1100-1199 subscription, 1200-1299 message,
+1300-1399 configuration, 1400-1499 registration, 1500-1599 state, 1600-1699
+permission, 9999 unknown. `1007` (`CONNECTION_SETUP_FAILED`): the real-time
+connection could not be set up, before any network traffic.
 
 ## Topics
 

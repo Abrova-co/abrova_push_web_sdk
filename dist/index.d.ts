@@ -36,6 +36,8 @@ export declare enum AbrovaPushErrorCode {
     AUTHENTICATION_FAILED = 1004,
     SSL_ERROR = 1005,
     BROKER_UNAVAILABLE = 1006,
+    /** The real-time connection could not be set up (before any network traffic). */
+    CONNECTION_SETUP_FAILED = 1007,
     SUBSCRIPTION_FAILED = 1100,
     UNSUBSCRIPTION_FAILED = 1101,
     INVALID_TOPIC = 1102,
@@ -246,6 +248,15 @@ export interface AbrovaPushConfig {
      * Without it the SDK behaves exactly as before.
      */
     tokenProvider?: TokenProvider;
+    /**
+     * Send counts of the SDK's own errors with its requests to Abrova Push
+     * (default: true). The SDK counts its errors by error code, with a short
+     * reason from a fixed list (for example `timeout` or `http503`) and the
+     * connection port, and sends the counts with its next request. Never a
+     * message, address, user or device detail. `false`: nothing is counted,
+     * kept or sent.
+     */
+    sendDiagnostics?: boolean;
 }
 /**
  * Notification action button
@@ -438,6 +449,9 @@ declare class AbrovaPush {
     private onAuthErrorCallback;
     private readonly userTokens;
     private readonly api;
+    private readonly diagnostics;
+    private roundPorts;
+    private readonly errorReasons;
     private registerRequested;
     private ackedMessageIds;
     private receivedMessageIds;
@@ -493,7 +507,15 @@ declare class AbrovaPush {
      * Check if analytics tracking is enabled
      */
     isAnalyticsEnabled(): boolean;
+    /**
+     * Reports an error to the app's callbacks. `reason` (a word from the fixed
+     * list, see diagnostics.ts) and `port` only go into the SDK's error counts.
+     */
     private emitError;
+    /** Counts an error for the SDK's error report. Never throws. */
+    private countError;
+    /** An error the SDK throws to the app, counted for the error report. */
+    private fail;
     /**
      * Every Push API call goes through here, so the user token and its expiry
      * are handled once. Without a token provider or token it is plain `fetch`.
@@ -743,6 +765,13 @@ declare class AbrovaPush {
      */
     private endpointsForRound;
     private connectToGateway;
+    /** The real-time connection could not be prepared (no network traffic yet). */
+    private connectionSetupFailed;
+    /**
+     * Port of the endpoint a connection error belongs to: the connected one, or
+     * the one port every endpoint of the round shares. Undefined when unknown.
+     */
+    private errorPort;
     /**
      * Stream the device, broadcast and topic channels. The socket keeps its
      * channels across reconnects and resubscribes them itself, so only channels
