@@ -25,7 +25,6 @@
     "push-notifications",
     "web-push",
     "service-worker",
-    "mqtt",
     "websocket",
     "firebase-alternative",
     "abrova-push"

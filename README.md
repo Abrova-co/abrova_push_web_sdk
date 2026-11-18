@@ -114,7 +114,7 @@ const abrovaPush = new AbrovaPush({
   serviceWorkerPath: '/abrova-push-sw.js',  // Optional - service worker path
   autoRegisterServiceWorker: true,          // Optional - auto register SW (default: true)
   serviceWorkerScope: '/',                  // Optional - its scope; use e.g. '/abrova-push/' next to another worker at '/'
-  mqttQos: 1,                              // Optional - MQTT QoS level (default: 1)
+  mqttQos: 1,                              // Optional - delivery guarantee level (default: 1)
   maxReconnectAttempts: 0,                  // Optional - max reconnect attempts (default: 0 = keep trying)
   logLevel: AbrovaPushLogLevel.ERROR,       // Optional - log level
   appVersion: '2.0.0',                      // Optional - your app version (segment filter)
@@ -144,7 +144,7 @@ X-Abrova-SDK-Report-Reasons: 1001:timeout.443=3 1402:http503=1
 ```
 
 Each count says why the error happened: a short reason from a fixed list (for
-example `timeout`, `offline`, `http503`, `ws1006` or `mqtt135`) and, for the
+example `timeout`, `offline`, `http503` or `ws1006`) and, for the
 real-time connection, the port. Never a message, address, user or device
 detail. At most 16 codes and 16 reasons are kept, in `localStorage` (in memory
 when storage is blocked), and they are removed once Abrova Push received them.

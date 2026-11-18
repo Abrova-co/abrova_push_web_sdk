@@ -8,7 +8,7 @@ This example showcases all SDK capabilities:
 
 ### 1. Push Notifications
 - Device registration with user ID
-- Real-time MQTT-based message delivery
+- Real-time message delivery
 - Background notifications via Web Push API
 - Notification actions handling
 - Deep linking support
